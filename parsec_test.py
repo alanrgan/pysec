@@ -39,24 +39,24 @@ def block():
 
 class BasicTest(unittest.TestCase):
 	def test_chain(self):
-		parser = Char('x') >> Between(Char('{'),Char('x'),Char('}'))
-		self.assertEquals(parser("x{x}")[0], "xx")
-		parser = Char('x') >> Char('y') << Char('k') << Char('z') >> Char('d')
-		self.assertEquals(parser("xykzd")[0], "xzd")
+		parser = generate(Char('x') >> Between(Char('{'),Char('x'),Char('}')))
+		self.assertEquals(parser("x{x}"), "xx")
+		parser = generate(Char('x') >> Char('y') << Char('k') << Char('z') >> Char('d'))
+		self.assertEquals(parser("xykzd"), "xzd")
 
 	def test_chain_and_alternative(self):
-		parser = Char("\\") >> Char('y') >> Char('x') | Char('z')
-		self.assertEquals(parser("\\yx")[0], "\\yx")
-		self.assertEquals(parser("z")[0], "z")
+		parser = generate(Char("\\") >> Char('y') >> Char('x') | Char('z'))
+		self.assertEquals(parser("\\yx"), "\\yx")
+		self.assertEquals(parser("z"), "z")
 		self.assertRaises(ParseError, parser, "yxz")
 		self.assertRaises(ParseError, parser, "\\z")
 		self.assertRaises(ParseError, parser, "\\yz")
 
 	def test_alternatives(self):
-		parser = String("hello") | String("what") | Char("x")
-		self.assertEquals(parser("helloworld!")[0], "hello")
-		self.assertEquals(parser("what")[0], "what")
-		self.assertEquals(parser("xyz")[0], "x")
+		parser = generate(String("hello") | String("what") | Char("x"))
+		self.assertEquals(parser("helloworld!"), "hello")
+		self.assertEquals(parser("what"), "what")
+		self.assertEquals(parser("xyz"), "x")
 		self.assertRaises(ParseError, parser, "world")
 
 class CombinatorTest(unittest.TestCase):

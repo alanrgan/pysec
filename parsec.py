@@ -111,7 +111,7 @@ class Chain(Parsec):
 				res = prevacc
 			else:
 				prevacc = res
-			acc += res
+				acc += res
 			#acc += res
 			#if isinstance(res, ParseError):
 			#	yield res
@@ -299,6 +299,13 @@ def lower():
 
 def alpha():
 	return upper()|lower()
+
+def generate(parser):
+	@Parser
+	def inner():
+		x, _ = yield parser
+		produce(x)
+	return inner
 
 def many(parser):
 	@Parser

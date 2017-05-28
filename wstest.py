@@ -27,9 +27,6 @@ class Statement:
 def integer():
 	x, _ = yield Many1(digit())
 	produce(int(x))
-	#x, _ = yield Char('x')
-	#y, _ = yield Char('y')
-	#produce({x:y})
 
 @Parser
 def x():
@@ -54,6 +51,10 @@ def between(start, body, end):
 m = many(Char('x'))
 b = between(Many1(Char('x')),Char('y'),Char('x'))
 print b("xxxxxyx")
+parser = generate(Char('x') >> Between(Char('{'),Char('x'),Char('}')))
+print parser("x{x}")
+parser = generate(Char('x') >> Char('y') << Char('k') << Char('z') >> Char('d'))
+print parser("xykzd")
 #print many('1234xy')
 #print integer.parse("12345")
 #a = integer.run("1234")
