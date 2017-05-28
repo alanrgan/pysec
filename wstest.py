@@ -3,9 +3,8 @@ from parsec import *
 def ident():
 	return alpha() >> Many(alpha()|digit()|Char('_'))
 
-def whitespace():
-	return Many1(OneOf(" \n\r\t"))
-
+whitespace = generate(Many1(OneOf(" \r\n\t")))
+maybeSpace = generate(Many(OneOf(" \r\n\t")))
 """
 whitespace = Many(OneOf(" \r\t\n"))
 w = whitespace > String("hello")
@@ -23,31 +22,28 @@ class Statement:
 		self.
 """
 
-@Parser
-def integer():
-	x, _ = yield Many1(digit())
-	produce(int(x))
+integer = parsec_map(int, Many1(digit()))
 
 @Parser
-def x():
-	x, _ = yield Many1(Char('x'))
+def spacedInt():
+	ws = yield maybeSpace
+	x, _ = yield integer
+	yield maybeSpace
 	produce(x)
 
-def many(parser):
-	@Parser
-	def inner():
-		x, _  = yield Many(parser)#Many(digit()) >> Char('x') >> Char('y')
-		produce(x)
-	return inner
+@Parser
+def foo():
+	produce("3")
 
-def between(start, body, end):
-	@Parser
-	def inner():
-		x, _ = yield Between(start, body, end)
-		produce(x)
-	return inner
+@Parser
+def mytest():
+	yield Many(Char('x'))
+	x, _ = yield Char('y') >> Char ('z')
+	produce(x)
 
-#m = Many(Char('x'))
+x = generate(Many1(Char('x')))
+
+print integer("1234")
 m = many(Char('x'))
 b = between(Many1(Char('x')),Char('y'),Char('x'))
 print b("xxxxxyx")
@@ -55,6 +51,13 @@ parser = generate(Char('x') >> Between(Char('{'),Char('x'),Char('}')))
 print parser("x{x}")
 parser = generate(Char('x') >> Char('y') << Char('k') << Char('z') >> Char('d'))
 print parser("xykzd")
+parser = generate(SepBy(Char('x'), Char(',')))
+print parser("x,x,x,x,x")
+#m = many(Char('x'))
+print mytest('xxxxxyz')
+#m = generate(Many(Char('x')))
+#print foo('xxxxxx')
+print spacedInt("  5   ")
 #print many('1234xy')
 #print integer.parse("12345")
 #a = integer.run("1234")

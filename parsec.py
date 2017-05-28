@@ -1,5 +1,6 @@
 from enum import Enum
 import copy
+import inspect
 
 class NextType(Enum):
 	Chain, Alternative, Discard = range(3)
@@ -13,7 +14,7 @@ class Parsec:
 		self.error = None
 		self.next_parser = None
 		self.type = None
-		self.value = None
+		self.mapfn = lambda x: x
 
 	def __call__(self, *args):
 		return self.parse(args[0])
@@ -42,17 +43,50 @@ class Parsec:
 		res, rest = acc, string
 		try:
 			gens = self.parse_body(string, acc)
-			mres = None
+			mres, subparser, parser = None, None, None
 			while True:
+				#print "sending " + repr(mres)
 				parser = gens.send(mres)
+				#print "Parser: " + repr(parser)
+				#print "mres is " + repr(mres)
 				ps = parser.parse_body(rest, acc)
-				l = list(ps)
-				if len(l) == 1:
-					raise l[0]
+				if isinstance(parser, Parser):
+					try:
+						while True:
+							#print "I AM A PARSER!\n"
+							a = ps.next()
+							#print "a is " + repr(a)
+							ms = list(a.parse_body(rest, acc))
+							#print "ms is " + repr(ms)
+							res = ps.send(ms)
+							#print "OUTTA HERE\n"
+					except ReturnVal as stopped:
+						mres = [stopped.value, ms[1]]
 				else:
+					mres = list(ps)
+					#print "MRES!!! is " + repr(mres)
+					#if len(mres) == 2:
+					#	_, rest = mres
+				if mres and isinstance(mres[0], ParseError):
+					#print "raising"
+					raise mres[0]
+				elif mres:
+					_, rest = mres
+				#l = [0]
+				#l = list(ps)
+				#print l
+				"""if len(l) == 1 and isinstance(l[0], ParseError):
+					raise l[0]
+				elif len(l) == 2:
 					mres = l
 					res, rest = mres
+				else:
+					subparser = l[0]"""
 		except ReturnVal as stop:
+			#print "stopvalue is " + repr(stop.value)
+			#print "rest is " + repr(rest)
+			#print "mres is " + repr(mres)
+			#print "done with " + repr(self)
 			return stop.value
 
 	def parse_body(self, string, acc=""):
@@ -70,6 +104,10 @@ class Parsec:
 		elif error and not suppress:
 			raise error
 		return result, rest, error
+
+	def parsec_map(self, fn):
+		self.mapfn = fn
+		return self
 
 class Parser(Parsec):
 	def __init__(self, fn):
@@ -101,24 +139,13 @@ class Chain(Parsec):
 		result, prevacc, rest = "", acc, string
 		res = ""
 		for i, parser in enumerate(self.others):
-			@Parser
-			def inner():
-				x, r = yield parser
-				produce((x,r))
-
+			inner = generate_rest(parser)
 			res, rest = inner(rest)
 			if i < len(self.discard) and self.discard[i]:
 				res = prevacc
 			else:
 				prevacc = res
 				acc += res
-			#acc += res
-			#if isinstance(res, ParseError):
-			#	yield res
-			#	return
-			#else:
-			#	acc += res
-
 		yield acc
 		yield rest
 
@@ -156,10 +183,7 @@ class Many(Parsec):
 		self.parser = parser
 
 	def parse_body(self, string, acc=""):
-		@Parser
-		def inner():
-			x, r = yield self.parser
-			produce((x,r))
+		inner = generate_rest(self.parser)
 
 		val = None
 		result, rest = acc, string
@@ -169,6 +193,7 @@ class Many(Parsec):
 				result += val
 			except ParseError:
 				break
+		#print "in many, rest is " + repr(rest)
 		yield result
 		yield rest
 
@@ -178,10 +203,7 @@ class Many1(Parsec):
 		self.parser = parser
 
 	def parse_body(self, string, acc=""):
-		@Parser
-		def inner():
-			x, r = yield self.parser
-			produce((x,r))
+		inner = generate_rest(self.parser)
 
 		result = acc
 		val, rest = inner(string)
@@ -192,7 +214,7 @@ class Many1(Parsec):
 				result += val
 			except ParseError:
 				break
-		yield result
+ 		yield result
 		yield rest
 
 class Char(Parsec):
@@ -232,7 +254,7 @@ class OneOf(Parsec):
 		else:
 			chrs = "".join(self.chars)
 			error = "expected one of %s, got %s" \
-					% (chrs, string[0] if len(string) > 0 else "")
+					% (chrs, repr(string[0]) if len(string) > 0 else repr(""))
 			yield ParseError(error)
 
 class NoneOf(Parsec):
@@ -262,6 +284,7 @@ class Between(Parsec):
 			x, rest = yield self.start << self.body
 			yield self.end
 			produce((x,rest))
+		inner.show_rest = True
 		result, rest = inner(string)
 		yield result
 		yield rest
@@ -273,14 +296,19 @@ class SepBy(Parsec):
 		self.sep = sep_parser
 
 	def parse_body(self, string, acc=""):
+		inner_body = generate_rest(self.body)
+		inner_sep = generate_rest(self.sep)
+
 		result, rest, error = [], string, None
-		while not error:
-			#res, rest, berror = self.body.parse(rest, suppress=True)
-			_, rest, error = self.sep.parse(rest, suppress=True)
-			result.append(res)
+		while True:
+			try:
+				res, rest = inner_body(rest)
+				_, rest = inner_sep(rest)
+				result.append(res)
+			except ParseError:
+				break
 		yield result
 		yield rest
-		#return result, rest, berror
 
 def produce(val):
 	raise ReturnVal(val)
@@ -300,16 +328,38 @@ def lower():
 def alpha():
 	return upper()|lower()
 
+def parsec_map(f, parser):
+	@Parser
+	def inner():
+		#print "in parsec map!!"
+		x, _ = yield parser
+		#print "second part of psec map"
+		#print "x is " + repr(x)
+		produce(f(x))
+	return inner
+
+
+def generate_rest(parser):
+	@Parser
+	def inner():
+		x, rest = yield parser
+		produce((x,rest))
+	return inner
+
 def generate(parser):
 	@Parser
 	def inner():
 		x, _ = yield parser
+			#print "x[0] is " + repr(x[0])
+			#print "parser was " + repr(parser)
 		produce(x)
 	return inner
 
 def many(parser):
 	@Parser
 	def inner():
-		x, _ = yield Many(parser)
-		produce(x)
+		produce(Many(parser))
 	return inner
+
+def between(start, body, end):
+	return generate(Between(start, body, end))
