@@ -23,26 +23,38 @@ class Statement:
 		self.
 """
 
-def no_rest(fn):
-	def wrapper():
-		yield fn().next()
-		yield ""
-	return wrapper
-
-class MyParser(Parser):
-	def __init__(self, fn):
-		Parser.__init__(self)
-		self.fn = fn
-
-	def parse_body(self, string, acc=""):
-		return self.fn()
-
-@MyParser
+@Parser
 def integer():
-	x, _ = yield Char('x')
-	y, _ = yield Char('y')
-	produce({x:y})
+	x, _ = yield Many1(digit())
+	produce(int(x))
+	#x, _ = yield Char('x')
+	#y, _ = yield Char('y')
+	#produce({x:y})
 
-print integer.parse("xy")
+@Parser
+def x():
+	x, _ = yield Many1(Char('x'))
+	produce(x)
+
+def many(parser):
+	@Parser
+	def inner():
+		x, _  = yield Many(parser)#Many(digit()) >> Char('x') >> Char('y')
+		produce(x)
+	return inner
+
+def between(start, body, end):
+	@Parser
+	def inner():
+		x, _ = yield Between(start, body, end)
+		produce(x)
+	return inner
+
+#m = Many(Char('x'))
+m = many(Char('x'))
+b = between(Many1(Char('x')),Char('y'),Char('x'))
+print b("xxxxxyx")
+#print many('1234xy')
+#print integer.parse("12345")
 #a = integer.run("1234")
 #print a

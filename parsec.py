@@ -8,7 +8,7 @@ class ReturnVal:
 	def __init__(self, val):
 		self.value = val
 
-class Parser:
+class Parsec:
 	def __init__(self):
 		self.error = None
 		self.next_parser = None
@@ -40,12 +40,12 @@ class Parser:
 
 	def parse(self, string, acc="", suppress=False, no_send=False):
 		res, rest = acc, string
-		gens = self.parse_body(string, acc)
 		try:
+			gens = self.parse_body(string, acc)
 			mres = None
 			while True:
 				parser = gens.send(mres)
-				ps = parser.parse_body(rest, res)
+				ps = parser.parse_body(rest, acc)
 				l = list(ps)
 				if len(l) == 1:
 					raise l[0]
@@ -54,25 +54,6 @@ class Parser:
 					res, rest = mres
 		except ReturnVal as stop:
 			return stop.value
-		"""
-			l = list(parser.parse_body(rest, res))
-			if len(l) == 1:
-				raise l[0]
-			else:
-				res, rest = l
-		return res"""
-		"""g = self.parse_body(string, acc)
-		try:
-			res = g.next()
-			if isinstance(res, ParseError):
-				raise res
-			g.close()
-			return res
-		except StopIteration as stop:
-			return stop.value"""
-		#result, rest, error = self.parse_body(string, acc)
-		#if not no_send:
-		#	return self.send_rest(result, rest, error, suppress)
 
 	def parse_body(self, string, acc=""):
 		pass
@@ -90,9 +71,17 @@ class Parser:
 			raise error
 		return result, rest, error
 
-class Chain(Parser):
+class Parser(Parsec):
+	def __init__(self, fn):
+		Parsec.__init__(self)
+		self.fn = fn
+
+	def parse_body(self, string, acc=""):
+		return self.fn()
+
+class Chain(Parsec):
 	def __init__(self, first, other, discard=False):
-		Parser.__init__(self)
+		Parsec.__init__(self)
 		self.others = [first, other]
 		self.discard = {0: discard}
 
@@ -109,15 +98,46 @@ class Chain(Parser):
 		return nself
 
 	def parse_body(self, string, acc=""):
-		result, rest = acc, string
+		result, prevacc, rest = "", acc, string
+		res = ""
 		for i, parser in enumerate(self.others):
-			if self.discard[i-1]:
-			acc += yield parser
-		produce(acc)
+			@Parser
+			def inner():
+				x, r = yield parser
+				produce((x,r))
 
-class Alternative(Parser):
+			res, rest = inner(rest)
+			if i < len(self.discard) and self.discard[i]:
+				res = prevacc
+			else:
+				prevacc = res
+			acc += res
+			#acc += res
+			#if isinstance(res, ParseError):
+			#	yield res
+			#	return
+			#else:
+			#	acc += res
+
+		yield acc
+		yield rest
+
+	"""
+	res, prevacc, rest, error = "", acc, string, None
+		for i,parser in enumerate(self.others):
+			if i > 0 and self.discard[i-1]:
+				res = prevacc
+			res, rest, error = parser.parse(rest, acc=res, suppress=True)
+			if i < len(self.discard) and not self.discard[i]:
+				prevacc = res
+			if error:
+				return "", string, error
+		return res, rest, error
+	"""
+
+class Alternative(Parsec):
 	def __init__(self, first, other):
-		Parser.__init__(self)
+		Parsec.__init__(self)
 		self.pair = (first, other)
 
 	def parse_body(self):
@@ -130,122 +150,125 @@ class ParseError:
 	def __str__(self):
 		return self.message
 
-class Many(Parser):
+class Many(Parsec):
 	def __init__(self, parser):
-		Parser.__init__(self)
+		Parsec.__init__(self)
 		self.parser = parser
 
 	def parse_body(self, string, acc=""):
-		error = None
+		@Parser
+		def inner():
+			x, r = yield self.parser
+			produce((x,r))
+
+		val = None
 		result, rest = acc, string
-		while error is None:
-			val, rest, error = self.parser.parse(rest, suppress=True)
-			if not error:
+		while True:
+			try:
+				val, rest = inner(rest)
 				result += val
-		return result, rest, None
+			except ParseError:
+				break
+		yield result
+		yield rest
 
-class Many1(Parser):
+class Many1(Parsec):
 	def __init__(self, parser):
-		Parser.__init__(self)
+		Parsec.__init__(self)
 		self.parser = parser
 
 	def parse_body(self, string, acc=""):
-		result = acc
-		val, rest, error = self.parser.parse(string, acc=acc, suppress=True)
-		if error:
-			return acc, rest, error
-		else:
-			result += val
-			while error is None:
-				val, rest, error = self.parser.parse(rest, suppress=True)
-				if not error:
-					result += val
-			return result, rest, None
+		@Parser
+		def inner():
+			x, r = yield self.parser
+			produce((x,r))
 
-class Char(Parser):
+		result = acc
+		val, rest = inner(string)
+		result += val
+		while True:
+			try:
+				val, rest = inner(rest)
+				result += val
+			except ParseError:
+				break
+		yield result
+		yield rest
+
+class Char(Parsec):
 	def __init__(self, char):
-		Parser.__init__(self)
+		Parsec.__init__(self)
 		self.char = char
 
 	def parse_body(self, string, acc=""):
 		if string.startswith(self.char):
 			yield acc+self.char
 			yield string[1:]
-			#return acc+self.char, string[1:], None
 		else:
 			error = "expected %s, got %s" % (str(self.char), string[0] if len(string) > 0 else "")
 			yield ParseError(error)
-			#return acc, string, ParseError(error)
 
-class String(Parser):
+class String(Parsec):
 	def __init__(self, string):
-		Parser.__init__(self)
+		Parsec.__init__(self)
 		self.string = string
 
 	def parse_body(self, string, acc=""):
 		if string.startswith(self.string):
 			yield acc+self.string
 			yield string[len(self.string):]
-			#return acc+self.string, string[len(self.string):], None
 		else:
 			yield ParseError("Could not parse " + self.string)
-			#return acc, string, ParseError("Cannot parse empty string")
 
-class OneOf(Parser):
+class OneOf(Parsec):
 	def __init__(self, chars):
-		Parser.__init__(self)
+		Parsec.__init__(self)
 		self.chars = chars
 
 	def parse_body(self, string, acc=""):
 		if string.startswith(tuple(self.chars)):
 			yield acc+string[0]
 			yield string[1:]
-			#return acc+string[0], string[1:], None
 		else:
 			chrs = "".join(self.chars)
 			error = "expected one of %s, got %s" \
 					% (chrs, string[0] if len(string) > 0 else "")
 			yield ParseError(error)
-			#return acc, string, ParseError(error)
 
-class NoneOf(Parser):
+class NoneOf(Parsec):
 	def __init__(self, chars):
-		Parser.__init__(self)
+		Parsec.__init__(self)
 		self.chars = chars
 
 	def parse_body(self, string, acc=""):
 		if not string.startswith(tuple(self.chars)):
 			yield acc+string[0]
 			yield string[1:]
-			#return acc+string[0], string[1:], None
 		else:
 			chrs = "".join(self.chars)
 			error = "expected none of %s, got %s" % (chrs, string[0] if len(string) > 0 else "")
 			yield ParseError(error)
-			#return acc, string, ParseError(error)
 
-class Between(Parser):
+class Between(Parsec):
 	def __init__(self, start_parser, body_parser, end_parser):
-		Parser.__init__(self)
+		Parsec.__init__(self)
 		self.start = start_parser
 		self.body = body_parser
 		self.end = end_parser
 
 	def parse_body(self, string, acc=""):
-		prefix = self.start << self.body
-		#result, rest, error = prefix.parse(string, acc=acc)
-		if error:
-			yield error
-			#return acc, string, error
-		yield self.end
-		#_, rest, error = self.end(rest)
+		@Parser
+		def inner():
+			x, rest = yield self.start << self.body
+			yield self.end
+			produce((x,rest))
+		result, rest = inner(string)
 		yield result
 		yield rest
-		#return result, rest, error
 
-class SepBy(Parser):
+class SepBy(Parsec):
 	def __init__(self, body_parser, sep_parser):
-		Parser.__init__(self)
+		Parsec.__init__(self)
 		self.body = body_parser
 		self.sep = sep_parser
 
@@ -276,3 +299,10 @@ def lower():
 
 def alpha():
 	return upper()|lower()
+
+def many(parser):
+	@Parser
+	def inner():
+		x, _ = yield Many(parser)
+		produce(x)
+	return inner
