@@ -4,6 +4,10 @@ import copy
 class NextType(Enum):
 	Chain, Alternative, Discard = range(3)
 
+class ReturnVal:
+	def __init__(self, val):
+		self.value = val
+
 class Parser:
 	def __init__(self):
 		self.error = None
@@ -35,9 +39,40 @@ class Parser:
 		return nself
 
 	def parse(self, string, acc="", suppress=False, no_send=False):
-		result, rest, error = self.parse_body(string, acc)
-		if not no_send:
-			return self.send_rest(result, rest, error, suppress)
+		res, rest = acc, string
+		gens = self.parse_body(string, acc)
+		try:
+			mres = None
+			while True:
+				parser = gens.send(mres)
+				ps = parser.parse_body(rest, res)
+				l = list(ps)
+				if len(l) == 1:
+					raise l[0]
+				else:
+					mres = l
+					res, rest = mres
+		except ReturnVal as stop:
+			return stop.value
+		"""
+			l = list(parser.parse_body(rest, res))
+			if len(l) == 1:
+				raise l[0]
+			else:
+				res, rest = l
+		return res"""
+		"""g = self.parse_body(string, acc)
+		try:
+			res = g.next()
+			if isinstance(res, ParseError):
+				raise res
+			g.close()
+			return res
+		except StopIteration as stop:
+			return stop.value"""
+		#result, rest, error = self.parse_body(string, acc)
+		#if not no_send:
+		#	return self.send_rest(result, rest, error, suppress)
 
 	def parse_body(self, string, acc=""):
 		pass
@@ -74,16 +109,19 @@ class Chain(Parser):
 		return nself
 
 	def parse_body(self, string, acc=""):
-		res, prevacc, rest, error = "", acc, string, None
-		for i,parser in enumerate(self.others):
-			if i > 0 and self.discard[i-1]:
-				res = prevacc
-			res, rest, error = parser.parse(rest, acc=res, suppress=True)
-			if i < len(self.discard) and not self.discard[i]:
-				prevacc = res
-			if error:
-				return "", string, error
-		return res, rest, error
+		result, rest = acc, string
+		for i, parser in enumerate(self.others):
+			if self.discard[i-1]:
+			acc += yield parser
+		produce(acc)
+
+class Alternative(Parser):
+	def __init__(self, first, other):
+		Parser.__init__(self)
+		self.pair = (first, other)
+
+	def parse_body(self):
+		pass
 
 class ParseError:
 	def __init__(self, message):
@@ -131,10 +169,13 @@ class Char(Parser):
 
 	def parse_body(self, string, acc=""):
 		if string.startswith(self.char):
-			return acc+self.char, string[1:], None
+			yield acc+self.char
+			yield string[1:]
+			#return acc+self.char, string[1:], None
 		else:
 			error = "expected %s, got %s" % (str(self.char), string[0] if len(string) > 0 else "")
-			return acc, string, ParseError(error)
+			yield ParseError(error)
+			#return acc, string, ParseError(error)
 
 class String(Parser):
 	def __init__(self, string):
@@ -143,9 +184,12 @@ class String(Parser):
 
 	def parse_body(self, string, acc=""):
 		if string.startswith(self.string):
-			return acc+self.string, string[len(self.string):], None
+			yield acc+self.string
+			yield string[len(self.string):]
+			#return acc+self.string, string[len(self.string):], None
 		else:
-			return acc, string, ParseError("Cannot parse empty string")
+			yield ParseError("Could not parse " + self.string)
+			#return acc, string, ParseError("Cannot parse empty string")
 
 class OneOf(Parser):
 	def __init__(self, chars):
@@ -154,12 +198,15 @@ class OneOf(Parser):
 
 	def parse_body(self, string, acc=""):
 		if string.startswith(tuple(self.chars)):
-			return acc+string[0], string[1:], None
+			yield acc+string[0]
+			yield string[1:]
+			#return acc+string[0], string[1:], None
 		else:
 			chrs = "".join(self.chars)
 			error = "expected one of %s, got %s" \
 					% (chrs, string[0] if len(string) > 0 else "")
-			return acc, string, ParseError(error)
+			yield ParseError(error)
+			#return acc, string, ParseError(error)
 
 class NoneOf(Parser):
 	def __init__(self, chars):
@@ -168,11 +215,14 @@ class NoneOf(Parser):
 
 	def parse_body(self, string, acc=""):
 		if not string.startswith(tuple(self.chars)):
-			return acc+string[0], string[1:], None
+			yield acc+string[0]
+			yield string[1:]
+			#return acc+string[0], string[1:], None
 		else:
 			chrs = "".join(self.chars)
 			error = "expected none of %s, got %s" % (chrs, string[0] if len(string) > 0 else "")
-			return acc, string, ParseError(error)
+			yield ParseError(error)
+			#return acc, string, ParseError(error)
 
 class Between(Parser):
 	def __init__(self, start_parser, body_parser, end_parser):
@@ -183,11 +233,15 @@ class Between(Parser):
 
 	def parse_body(self, string, acc=""):
 		prefix = self.start << self.body
-		result, rest, error = prefix.parse(string, acc=acc)
+		#result, rest, error = prefix.parse(string, acc=acc)
 		if error:
-			return acc, string, error
-		_, rest, error = self.end(rest)
-		return result, rest, error
+			yield error
+			#return acc, string, error
+		yield self.end
+		#_, rest, error = self.end(rest)
+		yield result
+		yield rest
+		#return result, rest, error
 
 class SepBy(Parser):
 	def __init__(self, body_parser, sep_parser):
@@ -198,10 +252,15 @@ class SepBy(Parser):
 	def parse_body(self, string, acc=""):
 		result, rest, error = [], string, None
 		while not error:
-			res, rest, berror = self.body.parse(rest, suppress=True)
+			#res, rest, berror = self.body.parse(rest, suppress=True)
 			_, rest, error = self.sep.parse(rest, suppress=True)
 			result.append(res)
-		return result, rest, berror
+		yield result
+		yield rest
+		#return result, rest, berror
+
+def produce(val):
+	raise ReturnVal(val)
 
 def digit():
 	ns = [chr(i) for i in range(ord("0"), ord("9")+1)]

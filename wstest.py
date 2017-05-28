@@ -23,27 +23,26 @@ class Statement:
 		self.
 """
 
+def no_rest(fn):
+	def wrapper():
+		yield fn().next()
+		yield ""
+	return wrapper
+
 class MyParser(Parser):
 	def __init__(self, fn):
 		Parser.__init__(self)
 		self.fn = fn
 
-	def run(self, string):
-		return self.parse(string, no_send =)
-
 	def parse_body(self, string, acc=""):
-		return self.fn(string)
+		return self.fn()
 
-#class Integer(MyParser):
-#	def __init__(self):
-#		Parser.__init__(self)
-
-#	def parse_body(self, string, acc=""):
 @MyParser
-def integer(string):
-	number = Many1(digit())
-	num, rest, error = number.parse(string)
-	yield int(num)
+def integer():
+	x, _ = yield Char('x')
+	y, _ = yield Char('y')
+	produce({x:y})
 
-a = integer.run("1234")
-print a
+print integer.parse("xy")
+#a = integer.run("1234")
+#print a
