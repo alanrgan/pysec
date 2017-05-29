@@ -46,7 +46,10 @@ class Parsec:
 	def parse_help(self, rest, acc, mres, res, gens=None, parser=None):
 		if parser is None:
 			parser = gens.send(mres)
-		ps = parser.parse_body(rest, acc)
+		if isinstance(parser, Parsec):
+			ps = parser.parse_body(rest, acc)
+		else:
+			produce(parser)
 		if isinstance(parser, Parser):
 			try:
 				while True:
@@ -71,8 +74,7 @@ class Parsec:
 		res, rest = acc, string
 		try:
 			gens = self.parse_body(string, acc)
-			mres, subparser, parser = None, None, None
-			ms = ["", ""]
+			mres, parser = None, None
 			while True:
 				mres = self.parse_help(rest, acc, mres, res, gens)
 				if mres and isinstance(mres[0], ParseError):
@@ -184,13 +186,18 @@ class Alternative(Parsec):
 				try:
 					res, rest = inner(string)
 					acc = res if not acc else acc+res
-					produce(acc)
+					yield acc
+					yield rest
+					return
 				except ParseError:
 					continue
 			else:
 				res, rest = inner(string)
 				acc = res if not acc else acc+res
-				produce(acc)
+				yield acc
+				yield rest
+				return
+		yield ParserError("Failed alternatives")
 
 class ParseError:
 	def __init__(self, message):

@@ -8,10 +8,10 @@ rbrace = Char('}')
 lbrack = Char('[')
 rbrack = Char(']')
 colon = Char(':')
-true = Wrap(parsec_map(lambda x: True, String("true")))
-false = Wrap(parsec_map(lambda x: False, String("false")))
-null = Wrap(parsec_map(lambda x: None, String("null")))
-number = Many1(digit())
+true = parsec_map(lambda x: True, String("true"))
+false = parsec_map(lambda x: False, String("false"))
+null = parsec_map(lambda x: None, String("null"))
+number = parsec_map(int, Many1(digit()))
 
 def normalize(string):
 	return re.sub(r'([\n\r\t\f\b])', r"\\\1", string)
@@ -41,25 +41,43 @@ def quoted():
 @Parser
 def array():
 	yield lbrack
-	elements = yield SepBy(value, comma)
+	elements, _ = yield SepBy(value, comma)
 	yield rbrack
 	produce(elements)
 
 @Parser
 def object_pair():
-	key = yield quoted
+	key, rest = yield quoted
 	yield colon
-	val = yield value
+	val, _ = yield value
 	produce((key, val))
 
 @Parser
 def json_object():
 	yield lbrace
-	pairs = yield SepBy(object_pair, comma)
+	pairs, _ = yield whitespace << (
+					SepBy(object_pair, (whitespace >> comma >> whitespace))
+				)
+	yield whitespace
 	yield rbrace
 	produce(dict(pairs))
 
-value = Wrap(quoted) | number | Wrap(json_object) | Wrap(array) | true | false | null
+atom = quoted | number | json_object | array | true | false | null
+value = Between(whitespace, atom, whitespace)
 
-jsonp = whitespace >> Wrap(json_object)
-#print jsonp('{"a": "true", "b": false, "C": ["a", "b", "C"]}')
+jsonp = whitespace << json_object
+print jsonp('{ "a": "true", "b": 4 , "C": ["a","b","C"] }')
+print jsonp('''
+            {
+                "a": {
+                    "a": "x",
+                    "b": "t",
+                    "c": {
+                        "a": true,
+                        "c": [true, false, true]
+                    }
+                }
+            }
+        ''')
+#print object_pair('"a":"true"')
+#b = generate(SepBy(quoted,comma))

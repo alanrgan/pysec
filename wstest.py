@@ -23,6 +23,7 @@ class Statement:
 """
 
 integer = parsec_map(int, Many1(digit()))
+wss = parsec_map(len, whitespace)
 
 @Parser
 def spacedInt():
@@ -42,8 +43,19 @@ def mytest():
 	x, _ = yield Char('y') >> Char ('z')
 	produce(x)
 
-x = generate(Many1(Char('x')))
+@Parser
+def bar():
+	i, _ = yield foo
+	produce(i)
 
+@Parser
+def baz():
+	i, _ = yield spacedInt | Char('w')
+	yield Many(Char('x'))
+	produce(i)
+
+x = generate(Many1(Char('x')))
+print baz("wxxxx")
 """
 print integer("1234")
 m = many(Char('x'))
@@ -66,7 +78,8 @@ parser = generate(SepBy(integer, Char(",")))
 print parser("1,2,3,4")
 parser = generate(SepBy(Char('x'), Char(',')))
 print parser("x,x,x,x,x,x")"""
-print foo("   x ")
+#print type(bar("   3 "))
+#print wss("     ")
 #print many('1234xy')
 #print integer.parse("12345")
 #a = integer.run("1234")
