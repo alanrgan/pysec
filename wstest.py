@@ -33,7 +33,8 @@ def spacedInt():
 
 @Parser
 def foo():
-	produce("3")
+	i, _ = yield spacedInt
+	produce(i)
 
 @Parser
 def mytest():
@@ -43,6 +44,7 @@ def mytest():
 
 x = generate(Many1(Char('x')))
 
+"""
 print integer("1234")
 m = many(Char('x'))
 b = between(Many1(Char('x')),Char('y'),Char('x'))
@@ -53,11 +55,18 @@ parser = generate(Char('x') >> Char('y') << Char('k') << Char('z') >> Char('d'))
 print parser("xykzd")
 parser = generate(SepBy(Char('x'), Char(',')))
 print parser("x,x,x,x,x")
+"""
 #m = many(Char('x'))
+"""
 print mytest('xxxxxyz')
 #m = generate(Many(Char('x')))
 #print foo('xxxxxx')
 print spacedInt("  5   ")
+parser = generate(SepBy(integer, Char(",")))
+print parser("1,2,3,4")
+parser = generate(SepBy(Char('x'), Char(',')))
+print parser("x,x,x,x,x,x")"""
+print foo("   x ")
 #print many('1234xy')
 #print integer.parse("12345")
 #a = integer.run("1234")

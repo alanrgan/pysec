@@ -1,4 +1,4 @@
-def coroutine(func):
+"""def coroutine(func):
 	def start(*args, **kwargs):
 		cr = func(*args, **kwargs)
 		cr.next()
@@ -18,4 +18,17 @@ if __name__ == '__main__':
 	g.send("Whooooo")
 	g.send("A series of tubes")
 	g.send("python is great")
-	g.send("i love python")
+	g.send("i love python")"""
+
+def countdown(n):
+	counter = n
+	while n >= 0:
+		v = yield n
+		print "got " + v
+		n -= 1
+
+g = countdown(30)
+r = g.send(None)
+print r
+r = g.send("hello")
+print r

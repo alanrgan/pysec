@@ -1,6 +1,10 @@
 from enum import Enum
 import copy
 import inspect
+import re
+
+def isgenstarted(gen):
+	return gen.gi_frame.f_lasti != -1
 
 class NextType(Enum):
 	Chain, Alternative, Discard = range(3)
@@ -23,7 +27,7 @@ class Parsec:
 		return Chain(self, other, discard=False)
 
 	def __or__(self, other):
-		return self.add(other, NextType.Alternative)
+		return Alternative(self, other)
 
 	def __lshift__(self, other):
 		"""Discard"""
@@ -39,49 +43,42 @@ class Parsec:
 			nself.next_parser = othercpy
 		return nself
 
+	def parse_help(self, rest, acc, mres, res, gens=None, parser=None):
+		if parser is None:
+			parser = gens.send(mres)
+		ps = parser.parse_body(rest, acc)
+		if isinstance(parser, Parser):
+			try:
+				while True:
+					if isgenstarted(ps):
+						a = ps.send(mres)
+					else:
+						a = ps.next()
+					ms = self.parse_help(rest, acc, mres, res, parser=a)
+					if len(ms) == 1:
+						raise ms[0]
+					res, rest = ms
+					mres = ms
+			except ReturnVal as stopped:
+				if isinstance(ms[0], ParseError):
+					raise ms[0]
+				mres = [stopped.value, ms[1]]
+		else:
+			mres = list(ps)
+		return mres
+
 	def parse(self, string, acc="", suppress=False, no_send=False):
 		res, rest = acc, string
 		try:
 			gens = self.parse_body(string, acc)
 			mres, subparser, parser = None, None, None
+			ms = ["", ""]
 			while True:
-				#print "sending " + repr(mres)
-				parser = gens.send(mres)
-				#print "Parser: " + repr(parser)
-				#print "mres is " + repr(mres)
-				ps = parser.parse_body(rest, acc)
-				if isinstance(parser, Parser):
-					try:
-						while True:
-							#print "I AM A PARSER!\n"
-							a = ps.next()
-							#print "a is " + repr(a)
-							ms = list(a.parse_body(rest, acc))
-							#print "ms is " + repr(ms)
-							res = ps.send(ms)
-							#print "OUTTA HERE\n"
-					except ReturnVal as stopped:
-						mres = [stopped.value, ms[1]]
-				else:
-					mres = list(ps)
-					#print "MRES!!! is " + repr(mres)
-					#if len(mres) == 2:
-					#	_, rest = mres
+				mres = self.parse_help(rest, acc, mres, res, gens)
 				if mres and isinstance(mres[0], ParseError):
-					#print "raising"
 					raise mres[0]
 				elif mres:
 					_, rest = mres
-				#l = [0]
-				#l = list(ps)
-				#print l
-				"""if len(l) == 1 and isinstance(l[0], ParseError):
-					raise l[0]
-				elif len(l) == 2:
-					mres = l
-					res, rest = mres
-				else:
-					subparser = l[0]"""
 		except ReturnVal as stop:
 			#print "stopvalue is " + repr(stop.value)
 			#print "rest is " + repr(rest)
@@ -135,17 +132,24 @@ class Chain(Parsec):
 		nself.others.append(other)
 		return nself
 
-	def parse_body(self, string, acc=""):
+	def parse_body(self, string, acc=None):
 		result, prevacc, rest = "", acc, string
 		res = ""
 		for i, parser in enumerate(self.others):
 			inner = generate_rest(parser)
-			res, rest = inner(rest)
+			x = inner(rest)
+			if isinstance(x, tuple):
+				res, rest = x
+			else:
+				res = x
 			if i < len(self.discard) and self.discard[i]:
 				res = prevacc
 			else:
 				prevacc = res
-				acc += res
+				if not acc:
+					acc = res
+				else:
+					acc += res
 		yield acc
 		yield rest
 
@@ -165,10 +169,28 @@ class Chain(Parsec):
 class Alternative(Parsec):
 	def __init__(self, first, other):
 		Parsec.__init__(self)
-		self.pair = (first, other)
+		self.others = [first, other]
 
-	def parse_body(self):
-		pass
+	def __or__(self, other):
+		nself = copy.deepcopy(self)
+		nself.others.append(other)
+		return nself
+
+	def parse_body(self, string, acc=None):
+		result, rest = acc, string
+		for i,parser in enumerate(self.others):
+			inner = generate_rest(parser)
+			if i != len(self.others) - 1:
+				try:
+					res, rest = inner(string)
+					acc = res if not acc else acc+res
+					produce(acc)
+				except ParseError:
+					continue
+			else:
+				res, rest = inner(string)
+				acc = res if not acc else acc+res
+				produce(acc)
 
 class ParseError:
 	def __init__(self, message):
@@ -189,11 +211,14 @@ class Many(Parsec):
 		result, rest = acc, string
 		while True:
 			try:
-				val, rest = inner(rest)
+				x = inner(rest)
+				if isinstance(x, tuple):
+					val, rest = x
+				else:
+					produce(result+x)
 				result += val
 			except ParseError:
 				break
-		#print "in many, rest is " + repr(rest)
 		yield result
 		yield rest
 
@@ -227,7 +252,7 @@ class Char(Parsec):
 			yield acc+self.char
 			yield string[1:]
 		else:
-			error = "expected %s, got %s" % (str(self.char), string[0] if len(string) > 0 else "")
+			error = "expected %s, got %s" % (str(self.char), repr(string[0]) if len(string) > 0 else repr(""))
 			yield ParseError(error)
 
 class String(Parsec):
@@ -241,6 +266,22 @@ class String(Parsec):
 			yield string[len(self.string):]
 		else:
 			yield ParseError("Could not parse " + self.string)
+
+class Regex(Parsec):
+	def __init__(self, pattern):
+		Parsec.__init__(self)
+		self.pattern = pattern
+		self.re = re.compile(pattern)
+
+	def parse_body(self, string, acc=""):
+		m = self.re.match(string)
+		if m:
+			res = m.group(0)
+			rest = string[len(res):]
+			yield res
+			yield rest
+		else:
+			yield ParseError("Could not match pattern %r" % self.pattern)
 
 class OneOf(Parsec):
 	def __init__(self, chars):
@@ -281,7 +322,8 @@ class Between(Parsec):
 	def parse_body(self, string, acc=""):
 		@Parser
 		def inner():
-			x, rest = yield self.start << self.body
+			yield self.start
+			x, rest = yield self.body
 			yield self.end
 			produce((x,rest))
 		inner.show_rest = True
@@ -299,31 +341,47 @@ class SepBy(Parsec):
 		inner_body = generate_rest(self.body)
 		inner_sep = generate_rest(self.sep)
 
-		result, rest, error = [], string, None
+		result, rest, error = [], string, False
+		ct = 0
 		while True:
-			try:
-				res, rest = inner_body(rest)
-				_, rest = inner_sep(rest)
-				result.append(res)
-			except ParseError:
-				break
+			if ct > 0:
+				try:
+					sep, rest = inner_sep(rest)
+				except ParseError:
+					break
+			res, rest = inner_body(rest)
+			result.append(res)
+			ct += 1
+			
 		yield result
 		yield rest
+
+class Wrap(Parsec):
+	"""
+	Wraps a Parser class into a Parsec. This is used when using generated parsers
+	inside other generated parsers.
+	"""
+	def __init__(self, other):
+		self.other = other
+
+	def parse_body(self, string, acc=""):
+		yield self.other(string)
+		yield ""
 
 def produce(val):
 	raise ReturnVal(val)
 
 def digit():
 	ns = [chr(i) for i in range(ord("0"), ord("9")+1)]
-	return OneOf(ns)
+	return generate(OneOf(ns))
 
 def upper():
 	chars = [chr(i) for i in range(ord('A'), ord('Z')+1)]
-	return OneOf(chars)
+	return generate(OneOf(chars))
 
 def lower():
 	chars = [chr(i) for i in range(ord('a'), ord('z')+1)]
-	return OneOf(chars)
+	return generate(OneOf(chars))
 
 def alpha():
 	return upper()|lower()
@@ -331,11 +389,8 @@ def alpha():
 def parsec_map(f, parser):
 	@Parser
 	def inner():
-		#print "in parsec map!!"
-		x, _ = yield parser
-		#print "second part of psec map"
-		#print "x is " + repr(x)
-		produce(f(x))
+		x = yield parser
+		produce(f(x[0]))
 	return inner
 
 
@@ -349,17 +404,18 @@ def generate_rest(parser):
 def generate(parser):
 	@Parser
 	def inner():
-		x, _ = yield parser
-			#print "x[0] is " + repr(x[0])
-			#print "parser was " + repr(parser)
-		produce(x)
+		x = yield parser
+		produce(x[0])
+	return inner
+
+def wrap(parser):
+	@Parser
+	def inner():
+		produce(parser)
 	return inner
 
 def many(parser):
-	@Parser
-	def inner():
-		produce(Many(parser))
-	return inner
+	return wrap(Many(parser))
 
 def between(start, body, end):
 	return generate(Between(start, body, end))

@@ -24,18 +24,13 @@ print ps("z")
 def ident():
 	return alpha() >> Many(alpha()|digit()|Char('_'))
 
-def integer():
-	return Many1(digit())
-
-def parse_int(string):
-	return int(integer()(string)[0])
-
-def whitespace():
-	return Many1(OneOf(" \n\r\t"))
+integer = parsec_map(int,Many1(digit()))
+whitespace = generate(Many1(OneOf(" \r\n\t")))
+maybeSpace = generate(Many(OneOf(" \r\n\t")))
 
 def block():
 	word = Between(whitespace(), ident(), whitespace())
-	return Between(Char('{'),word,Char('}'))
+	return generate(Between(Char('{'),word,Char('}')))
 
 class BasicTest(unittest.TestCase):
 	def test_chain(self):
@@ -44,7 +39,6 @@ class BasicTest(unittest.TestCase):
 		parser = generate(Char('x') >> Char('y') << Char('k') << Char('z') >> Char('d'))
 		self.assertEquals(parser("xykzd"), "xzd")
 
-	"""
 	def test_chain_and_alternative(self):
 		parser = generate(Char("\\") >> Char('y') >> Char('x') | Char('z'))
 		self.assertEquals(parser("\\yx"), "\\yx")
@@ -59,7 +53,6 @@ class BasicTest(unittest.TestCase):
 		self.assertEquals(parser("what"), "what")
 		self.assertEquals(parser("xyz"), "x")
 		self.assertRaises(ParseError, parser, "world")
-	"""
 
 class StringCombinatorTest(unittest.TestCase):
 	def test_between(self):
@@ -67,6 +60,15 @@ class StringCombinatorTest(unittest.TestCase):
 		self.assertEquals(parser("xxxxxxyx"), "y")
 		self.assertRaises(ParseError, parser, "yx")
 		self.assertEquals(parser("xxxyxx"), "y")
+
+	def test_sep_by(self):
+		parser = generate(SepBy(Char('x'), Char(',')))
+		self.assertEquals(parser('x,x,x,x,x,x'), ["x","x","x","x","x","x"])
+		self.assertRaises(ParseError, parser, 'x,x,x,')
+		parser = generate(SepBy(integer, Char(',')))
+		self.assertEquals(parser('1,2,3,4,5'), range(1,6))
+		parser = generate(SepBy(integer, whitespace))
+		self.assertEquals(parser('1 2 3  4 5 6'), range(1,7))
 
 	"""
 	def test_block(self):
@@ -92,11 +94,23 @@ class TypedCombinatorTest(unittest.TestCase):
 		self.init_parsers()
 
 	def init_parsers(self):
-		self.integer = parsec_map(int, Many1(digit()))
 		self.maybeSpace = generate(Many1(OneOf(" \r\n\t")))
+		@Parser
+		def spacedInt():
+			ws = yield maybeSpace
+			x, _ = yield integer
+			yield maybeSpace
+			produce(x)
+		self.spaced_int = spacedInt
+
+		@Parser
+		def yield_generated():
+			i, _ = yield spacedInt
+			produce(i)
+		self.yield_generated = yield_generated
 
 	def test_basic_int(self):
-		parser = self.integer
+		parser = integer
 		self.assertEquals(parser("1234"), 1234)
 		self.assertRaises(ParseError, parser, "xyz")
 
@@ -104,13 +118,15 @@ class TypedCombinatorTest(unittest.TestCase):
 		@Parser
 		def parser():
 			yield self.maybeSpace
-			x, _ = yield self.integer
+			x, _ = yield integer
 			yield self.maybeSpace
 			produce(x)
 		self.assertEquals(parser("    12345 "), 12345)
 
+	def test_yield_generated(self):
+		parser = self.yield_generated
+		self.assertEquals(parser("    124141    "), 124141)
+		self.assertRaises(ParseError, parser, "     xyz  ")
+
 if __name__ == '__main__':
 	unittest.main()
-
-#print block()("{   hello_world   }")
-
