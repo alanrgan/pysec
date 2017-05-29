@@ -1,32 +1,12 @@
 from parsec import *
 import unittest
 
-"""
-xyz = Many(Char('x')) >> Many(Char('y')) >> Char('z')
-print xyz('yyyyz')
-print xyz('xxxxxyz')
-xs = Many1(Char('x')) | Many(Char('y'))
-print xs('yyy')
-hello_world = String("Hello") >> Char(" ") >> String("World")
-print hello_world("Hello World")
-
-ds = Char('x') >> Many(digit) >> Char("x")
-print (digit|ds)("x1234x")
-
-whitespace = Many(OneOf(" \n\r\t"))
-print (whitespace << String("hello"))("      hello")
-ps = Char("\\") >> Char('y') | Char('z')
-print ps("\\y")
-print ps("z")
-"""
-#print ps("\\z")
-
 def ident():
 	return alpha() >> Many(alpha()|digit()|Char('_'))
 
-integer = parsec_map(int,Many1(digit()))
-whitespace = generate(Many1(OneOf(" \r\n\t")))
-maybeSpace = generate(Many(OneOf(" \r\n\t")))
+integer = parsec_map(int,concat(Many1(digit())))
+whitespace = generate(concat(Many1(OneOf(" \r\n\t"))))
+maybeSpace = generate(concat(Many(OneOf(" \r\n\t"))))
 
 def block():
 	word = Between(whitespace(), ident(), whitespace())
@@ -54,9 +34,16 @@ class BasicTest(unittest.TestCase):
 		self.assertEquals(parser("xyz"), "x")
 		self.assertRaises(ParseError, parser, "world")
 
+	def test_xor(self):
+		forbidden = ["let", "return", "one"]
+		fn = lambda x: String(x).discard(NotFollowedBy(alpha()))
+		parser = concat(Many1(alpha())) ^ map(fn, forbidden)
+		self.assertEquals(parser("hello"), "hello")
+		self.assertRaises(ParseError, parser, "let")
+
 class StringCombinatorTest(unittest.TestCase):
 	def test_between(self):
-		parser = between(Many1(Char('x')),Char('y'),Char('x'))
+		parser = between(concat(Many1(Char('x'))),Char('y'),Char('x'))
 		self.assertEquals(parser("xxxxxxyx"), "y")
 		self.assertRaises(ParseError, parser, "yx")
 		self.assertEquals(parser("xxxyxx"), "y")
@@ -69,24 +56,14 @@ class StringCombinatorTest(unittest.TestCase):
 		self.assertEquals(parser('1,2,3,4,5'), range(1,6))
 		parser = generate(SepBy(integer, whitespace))
 		self.assertEquals(parser('1 2 3  4 5 6'), range(1,7))
+		parser = generate(SepBy(integer, Between(whitespace, Char('z'), whitespace)))
+		self.assertEquals(parser("123   z  1234 z     6"), [123,1234,6])
 
-	"""
-	def test_block(self):
-		parser = generate(block())
-		self.assertEquals(parser("{    hello_world  }"), "hello_world")
-		self.assertRaises(ParseError, parser, "hello_world }")
-	"""
-
-	"""
-	def test_sep_by(self):
-		parser = generate(SepBy(Many1(alpha()), Char(',')))
-		self.assertEquals(parser("one,two,three,four"), ["one", "two", "three", "four"])
-		self.assertEquals(parser("onetwothreefour"), ["onetwothreefour"])
-		self.assertRaises(ParseError, parser, "one,")
-
-		parser = generate(SepBy(ident(), whitespace()))
-		self.assertEquals(parser("hello   world foo bar baz"), ["hello", "world", "foo", "bar", "baz"])
-	"""
+	def test_end_by(self):
+		mystring = parsec_map(lambda x: ''.join(x), Many1(alpha()))
+		parser = generate(EndBy(mystring, Char(';')))
+		self.assertEquals(parser("one;two;three;"), ["one","two", "three"])
+		self.assertRaises(ParseError, parser, "two;four")
 
 class TypedCombinatorTest(unittest.TestCase):
 	def __init__(self, *args, **kwargs):
@@ -94,7 +71,7 @@ class TypedCombinatorTest(unittest.TestCase):
 		self.init_parsers()
 
 	def init_parsers(self):
-		self.maybeSpace = generate(Many1(OneOf(" \r\n\t")))
+		self.maybeSpace = generate(concat(Many1(OneOf(" \r\n\t"))))
 		@Parser
 		def spacedInt():
 			ws = yield maybeSpace
@@ -127,6 +104,15 @@ class TypedCombinatorTest(unittest.TestCase):
 		parser = self.yield_generated
 		self.assertEquals(parser("    124141    "), 124141)
 		self.assertRaises(ParseError, parser, "     xyz  ")
+
+	def test_not_followed_by(self):
+		@Parser
+		def parser():
+			yield String("let")
+			yield NotFollowedBy(alpha())
+			produce(True)
+		self.assertEquals(parser("let "), True)
+		self.assertRaises(ParseError, parser, "lets")
 
 if __name__ == '__main__':
 	unittest.main()

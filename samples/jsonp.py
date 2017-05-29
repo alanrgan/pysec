@@ -1,20 +1,17 @@
 from parsec import *
 import re
 
-whitespace = generate(Many(OneOf(" \r\n\t")))
+whitespace = generate(concat(Many(OneOf(" \r\n\t"))))
 comma = Char(',')
 lbrace = Char('{')
 rbrace = Char('}')
 lbrack = Char('[')
 rbrack = Char(']')
 colon = Char(':')
-true = parsec_map(lambda x: True, String("true"))
-false = parsec_map(lambda x: False, String("false"))
-null = parsec_map(lambda x: None, String("null"))
-number = parsec_map(int, Many1(digit()))
-
-def normalize(string):
-	return re.sub(r'([\n\r\t\f\b])', r"\\\1", string)
+true = String("true").result(True)
+false = String("false").result(False)
+null = String("null").result(None)
+number = parsec_map(int, concat(Many1(digit())))
 
 def charseq():
 	def strpart():
@@ -36,7 +33,7 @@ def quoted():
 	yield Char('"')
 	body, _ = yield Many(charseq())
 	yield Char('"')
-	produce(body)
+	produce(''.join(body))
 
 @Parser
 def array():
@@ -55,9 +52,7 @@ def object_pair():
 @Parser
 def json_object():
 	yield lbrace
-	pairs, _ = yield whitespace << (
-					SepBy(object_pair, (whitespace >> comma >> whitespace))
-				)
+	pairs, _ = yield whitespace << SepBy(object_pair, Surround(comma, whitespace))
 	yield whitespace
 	yield rbrace
 	produce(dict(pairs))
@@ -66,8 +61,9 @@ atom = quoted | number | json_object | array | true | false | null
 value = Between(whitespace, atom, whitespace)
 
 jsonp = whitespace << json_object
-print jsonp('{ "a": "true", "b": 4 , "C": ["a","b","C"] }')
-print jsonp('''
+
+first = jsonp('{ "a": "true",     "b": 4 , "C": ["a","b","C"] }')
+second = jsonp('''
             {
                 "a": {
                     "a": "x",
