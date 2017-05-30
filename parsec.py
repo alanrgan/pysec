@@ -3,6 +3,8 @@ import copy
 import inspect
 import re
 
+#TODO: need to customize error messages and have better ones
+
 def isgenstarted(gen):
 	return gen.gi_frame.f_lasti != -1
 
@@ -21,7 +23,6 @@ class Parsec:
 		self.error = None
 		self.next_parser = None
 		self.type = None
-		self.mapfn = lambda x: x
 
 	def __call__(self, *args):
 		return self.parse(args[0])
@@ -57,7 +58,7 @@ class Parsec:
 			nself.next_parser = othercpy
 		return nself
 
-	def parse_help(self, rest, acc, mres, res, gens=None, parser=None):
+	def parse_help(self, rest, acc, mres, res, gens=None, parser=None, consumed=False):
 		if parser is None:
 			parser = gens.send(mres)
 		ps = parser.parse_body(rest, acc)
@@ -69,9 +70,11 @@ class Parsec:
 						a = ps.send(mres)
 					else:
 						a = ps.next()
-					ms = self.parse_help(rest, acc, mres, res, parser=a)
+					ms = self.parse_help(rest, acc, mres, res, parser=a, consumed=consumed)
 					if len(ms) == 1:
+						ms[0].consumed = consumed
 						raise ms[0]
+					consumed = True
 					res, rest = ms
 					mres = ms
 			except ReturnVal as stopped:
@@ -84,13 +87,16 @@ class Parsec:
 		res, rest = acc, string
 		try:
 			gens = self.parse_body(string, acc)
-			mres, parser = None, None
+			mres = None
+			ct = 0
 			while True:
-				mres = self.parse_help(rest, acc, mres, res, gens)
+				mres = self.parse_help(rest, acc, mres, res, gens, consumed=(ct > 0))
 				if mres and isinstance(mres[0], ParseError):
+					mres[0].consumed = (ct > 0)
 					raise mres[0]
 				elif mres:
 					_, rest = mres
+				ct += 1
 		except ReturnVal as stop:
 			return stop.value
 
@@ -98,24 +104,8 @@ class Parsec:
 		return parsec_map(lambda _: value, self)
 
 	def parse_body(self, string, acc=""):
+		"""Function to override when deriving new combinators."""
 		pass
-
-	def send_rest(self, result, rest, error, suppress):
-		if self.next_parser:
-			if self.type == NextType.Alternative:
-				if error:
-					return self.next_parser.parse(rest, result, suppress)
-			elif error and not suppress:
-				raise error
-			else:
-				return self.next_parser.parse(rest, result, suppress)
-		elif error and not suppress:
-			raise error
-		return result, rest, error
-
-	def parsec_map(self, fn):
-		self.mapfn = fn
-		return self
 
 class Parser(Parsec):
 	def __init__(self, fn):
@@ -124,6 +114,12 @@ class Parser(Parsec):
 
 	def parse_body(self, string, acc=""):
 		return self.fn()
+
+class Result:
+	def __init__(self, value, rest=None, error=None):
+		self.value = value
+		self.error = error
+		self.rest = rest
 
 class Only(Parsec):
 	"""
@@ -147,10 +143,29 @@ class Only(Parsec):
 				x = generate(parser)(string)
 				yield ParseError("Found unexpected %s" % repr(x))
 				return
-			except ParseError:
+			except ParseError as pe:
+				if pe.consumed:
+					raise pe
 				continue
 		yield x
 		yield rest
+
+class Try(Parsec):
+	def __init__(self, parser):
+		Parsec.__init__(self)
+		self.parser = parser
+
+	def parse_body(self, string, acc=None):
+		inner = generate_rest(self.parser)
+		try:
+			result, rest = inner(string)
+			yield result
+			yield rest
+		except ParseError as pe:
+			if pe.consumed:
+				raise pe
+			yield None
+			yield string
 
 class Chain(Parsec):
 	def __init__(self, first, other, discard=False):
@@ -174,20 +189,25 @@ class Chain(Parsec):
 		result, prevacc, rest = "", acc, string
 		res = ""
 		for i, parser in enumerate(self.others):
-			inner = generate_rest(parser)
-			x = inner(rest)
-			if isinstance(x, tuple):
-				res, rest = x
-			else:
-				res = x
-			if i < len(self.discard) and self.discard[i]  == True:
-				res = prevacc
-			else:
-				prevacc = res
-				if not acc:
-					acc = res
+			try:
+				inner = generate_rest(parser)
+				x = inner(rest)
+				if isinstance(x, tuple):
+					res, rest = x
 				else:
-					acc += res
+					res = x
+				if i < len(self.discard) and self.discard[i]  == True:
+					res = prevacc
+				else:
+					prevacc = res
+					if not acc:
+						acc = res
+					else:
+						acc += res
+			except ParseError as pe:
+				pe.consumed = True if i > 0 else False
+				raise pe
+
 		yield acc
 		yield rest
 
@@ -212,7 +232,9 @@ class Alternative(Parsec):
 					yield acc
 					yield rest
 					return
-				except ParseError:
+				except ParseError as pe:
+					if pe.consumed:
+						raise pe
 					continue
 			else:
 				res, rest = inner(string)
@@ -223,8 +245,9 @@ class Alternative(Parsec):
 		yield ParserError("Failed alternatives")
 
 class ParseError:
-	def __init__(self, message):
+	def __init__(self, message, consumed=False):
 		self.message = message
+		self.consumed = consumed
 
 	def __str__(self):
 		return self.message
@@ -243,7 +266,9 @@ class Many(Parsec):
 			try:
 				val, rest = inner(rest)
 				result.append(val)
-			except ParseError:
+			except ParseError as pe:
+				if pe.consumed:
+					raise pe
 				break
 		yield result
 		yield rest
@@ -263,7 +288,9 @@ class Many1(Parsec):
 			try:
 				val, rest = inner(rest)
 				result.append(val)
-			except ParseError:
+			except ParseError as pe:
+				if pe.consumed:
+					raise pe
 				break
  		yield result
 		yield rest
@@ -346,14 +373,18 @@ class Between(Parsec):
 		self.end = end_parser
 
 	def parse_body(self, string, acc=""):
-		@Parser
-		def inner():
-			yield self.start
-			x, _ = yield self.body
-			_, rest = yield self.end
-			produce((x,rest))
-		result, rest = inner(string)
-		yield result
+		inner = generate_rest(self.start)
+		inner_body = generate_rest(self.body)
+		inner_end = generate_rest(self.end)
+		_, rest = inner(string)
+		try:
+			x, rest = inner_body(rest)
+			_, rest = inner_end(rest)
+		except ParseError as pe:
+			pe.consumed = True
+			raise pe
+		
+		yield x
 		yield rest
 
 class SepBy(Parsec):
@@ -372,7 +403,9 @@ class SepBy(Parsec):
 			if ct > 0:
 				try:
 					sep, rest = inner_sep(rest)
-				except ParseError:
+				except ParseError as pe:
+					if pe.consumed:
+						raise pe
 					break
 			res, rest = inner_body(rest)
 			result.append(res)
@@ -395,7 +428,9 @@ class EndBy(Parsec):
 		while True:
 			try:
 				res, rest = inner_body(rest)
-			except ParseError:
+			except ParseError as pe:
+				if pe.consumed:
+					raise pe
 				break
 			_, rest = inner_sep(rest)
 			result.append(res)
