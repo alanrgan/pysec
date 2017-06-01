@@ -23,6 +23,7 @@ class Parsec:
 		self.error = None
 		self.next_parser = None
 		self.type = None
+		self.__name__ = self.__class__.__name__
 
 	def __call__(self, *args):
 		return self.parse(args[0])
@@ -222,7 +223,7 @@ class Alternative(Parsec):
 		return nself
 
 	def parse_body(self, string, acc=None):
-		result, rest = acc, string
+ 		result, rest = acc, string
 		for i,parser in enumerate(self.others):
 			inner = generate_rest(parser)
 			if i != len(self.others) - 1:
@@ -233,8 +234,6 @@ class Alternative(Parsec):
 					yield rest
 					return
 				except ParseError as pe:
-					if pe.consumed:
-						raise pe
 					continue
 			else:
 				res, rest = inner(string)
@@ -267,8 +266,6 @@ class Many(Parsec):
 				val, rest = inner(rest)
 				result.append(val)
 			except ParseError as pe:
-				if pe.consumed:
-					raise pe
 				break
 		yield result
 		yield rest
@@ -294,6 +291,37 @@ class Many1(Parsec):
 				break
  		yield result
 		yield rest
+
+class ManyUntil(Parsec):
+	def __init__(self, parser, until):
+		Parsec.__init__(self)
+		self.parser = parser
+		self.until = until
+
+	def parse_body(self, string, acc=""):
+		inner = generate_rest(self.parser)
+		until = generate_rest(self.until)
+		result, rest = [], string
+		while True:
+			try:
+				_, rest = until(rest)
+			except ParseError as pe:
+				if pe.consumed:
+					raise pe
+				pass
+			else:
+				x, rest = inner(rest)
+				result.append(x)
+		yield result
+		yield rest
+
+class AnyChar(Parsec):
+	def parse_body(self, string, acc=""):
+		if len(string) > 0:
+			yield acc+string[0]
+			yield string[1:]
+		else:
+			yield ParseError("Unexpected EOF")
 
 class Char(Parsec):
 	def __init__(self, char):
@@ -373,17 +401,14 @@ class Between(Parsec):
 		self.end = end_parser
 
 	def parse_body(self, string, acc=""):
-		inner = generate_rest(self.start)
-		inner_body = generate_rest(self.body)
-		inner_end = generate_rest(self.end)
-		_, rest = inner(string)
-		try:
-			x, rest = inner_body(rest)
-			_, rest = inner_end(rest)
-		except ParseError as pe:
-			pe.consumed = True
-			raise pe
-		
+		@Parser
+		def inner():
+			yield self.start
+			x, _ = yield self.body
+			_, rest = yield self.end
+			produce((x, rest))
+
+		x, rest = inner(string)
 		yield x
 		yield rest
 
@@ -404,8 +429,6 @@ class SepBy(Parsec):
 				try:
 					sep, rest = inner_sep(rest)
 				except ParseError as pe:
-					if pe.consumed:
-						raise pe
 					break
 			res, rest = inner_body(rest)
 			result.append(res)

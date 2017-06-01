@@ -25,7 +25,13 @@ ks = ["let", "if", "else", "return", "break",
 
 for i,k in enumerate(ks):
 	keyword = String(k) if i == 0 else keyword|String(k)
-keyword = generate(keyword >> NotFollowedBy(alpha()))
+
+kwords = keyword
+@Parser
+def keyword():
+	x, _ = yield kwords >> NotFollowedBy(alpha())
+	produce(x)
+#keyword = generate(keyword >> NotFollowedBy(alpha()))
 
 comma = Char(',')
 integer = parsec_map(int, concat(Many1(digit())))
@@ -112,7 +118,7 @@ fexpr = statement('''
 		for z in twenty {
 			5;
 		}
-		if {
+		if true {
 			7;
 		}
 	}''')
