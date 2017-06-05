@@ -1,27 +1,61 @@
 from parsec import *
+from collections import namedtuple
 
-class Statement():
+class Statement(object):
 	def __init__(self, val):
 		self.val = val
 
-class MatchStatement():
+class MatchStatement(object):
 	def __init__(self, stmts):
 		self.stmts = stmts
 
-class IfStatement():
+class IfStatement(object):
 	def __init__(self, cond, conseq, alt):
 		self.cond = cond
 		self.conseq = conseq
 		self.alt = alt
 
-class ForStatement():
+class ForStatement(object):
 	def __init__(self, var, fexpr, body):
 		self.var = var
 		self.expr = fexpr
 		self.body = body
 
+class BinOpExpr(object):
+	def __init__(self, op, left, right):
+		self.op = op
+		self.left = left
+		self.right = right
+
+	def eval(self):
+		left = self.left if not isinstance(self.left, BinOpExpr) else self.left.eval()
+		right = self.right if not isinstance(self.right, BinOpExpr) else self.right.eval()
+		return opfuncs[self.op](left, right)
+
+	def __repr__(self):
+		left = "(%s)" % repr(self.left) if isinstance(self.left, BinOpExpr) else repr(self.left)
+		right = "(%s)" % repr(self.right) if isinstance(self.right, BinOpExpr) else repr(self.right)
+		return "%s %c %s" % (left, self.op, right)
+
 ks = ["let", "if", "else", "return", "break",
 	  "def", "match", "true", "false", "for", "in"]
+binops = "+-*/^"
+OpInfo = namedtuple("OpInfo", "prec, assoc")
+
+precedence_map = {
+	'+': OpInfo(4, 'LEFT'),
+	'-': OpInfo(4, 'LEFT'),
+	'*': OpInfo(5, 'LEFT'),
+	'/': OpInfo(5, 'LEFT'),
+	'^': OpInfo(6, 'RIGHT')
+}
+opfuncs = {
+	'+': lambda x,y: x+y,
+	'-': lambda x,y: x-y,
+	'*': lambda x,y: x*y,
+	'/': lambda x,y: x/y,
+	'^': lambda x,y: x**y
+}
 
 for i,k in enumerate(ks):
 	keyword = String(k) if i == 0 else keyword|String(k)
@@ -47,6 +81,7 @@ identChars= alpha() >> concat(Many(alpha()|digit()|Char('_')))
 ident = identChars ^ keyword
 identws = Surround(ident, whitespace)
 boolean = String("true").result(True) | String("false").result(False)
+string = Char('"') << concat(ManyUntil(AnyChar(), Char('"')))
 
 def spaced(parser):
 	return Surround(parser, whitespace)
@@ -96,9 +131,54 @@ def match_statement():
 	stmts, _ = yield Between(Char('{'), statementList, Char('}'))
 	produce(MatchStatement(stmts))
 
-expr = spaced(ident | integer | boolean)
-exprStatement = expr.discard(Char(';'))
+"""
+The following is an example of extending the Parser class for more than simple
+'feed-back' parsing.
+"""
+class expr(Parser):
+	def __init__(self, precedence=0):
+		self.precedence = precedence
 
+	def parse_body(self, _string, acc=""):
+		x, _ = yield atom
+		while True:
+			op = (yield Try(PeekChar()))[0]
+			if op and op in binops:
+				next_precedence, assoc = precedence_map[op]
+				if self.precedence >= next_precedence:
+					break
+				x, _ = yield infix_expr((op, assoc), x, next_precedence)
+			else:
+				break
+		produce(x)
+
+class infix_expr(Parser):
+	def __init__(self, opinfo, exp, precedence):
+		self.precedence = precedence-1 if opinfo[1] == 'RIGHT' else precedence
+		self.expr = exp
+		self.op = opinfo[0]
+
+	def parse_body(self, _string, acc=""):
+		if self.op in binops:
+			yield OneOf(binops)
+			right, _ = yield expr(self.precedence)
+			produce(BinOpExpr(self.op, self.expr, right))
+		else:
+			yield ParseError("unexpected token " + repr(self.op))
+
+atom = spaced(
+	  ident
+	| integer
+	| boolean
+	| string
+	| Between(Char('('),expr(),Char(')'))
+)
+array = generate(Between(lbrack, SepBy(expr(), comma), rbrack))
+
+exprStatement = expr().discard(Char(';'))
+print generate(expr())("3+4*5^2")
+print generate(string)('"hello world"')
+"""
 ms = match_statement('''
 	match {
 		hello;
@@ -121,4 +201,4 @@ fexpr = statement('''
 		if true {
 			7;
 		}
-	}''')
+	}''')"""

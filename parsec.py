@@ -305,13 +305,12 @@ class ManyUntil(Parsec):
 		while True:
 			try:
 				_, rest = until(rest)
+				break
 			except ParseError as pe:
 				if pe.consumed:
 					raise pe
-				pass
-			else:
-				x, rest = inner(rest)
-				result.append(x)
+			x, rest = inner(rest)
+			result.append(x)
 		yield result
 		yield rest
 
@@ -391,6 +390,19 @@ class NoneOf(Parsec):
 		else:
 			chrs = "".join(self.chars)
 			error = "expected none of %s, got %s" % (chrs, string[0] if len(string) > 0 else "")
+			yield ParseError(error)
+
+class PeekChar(Parsec):
+	def __init__(self, nchars=1):
+		Parsec.__init__(self)
+		self.nchars = nchars
+
+	def parse_body(self, string, acc=""):
+		if len(string) >= self.nchars:
+			yield string[:self.nchars]
+			yield string
+		else:
+			error = "cannot peek %d char(s) into a string of len %d" % (self.nchars, len(string))
 			yield ParseError(error)
 
 class Between(Parsec):
